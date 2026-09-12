@@ -1,0 +1,26 @@
+environment: production
+replicaCount: 3
+image:
+  repository: replace.azurecr.io/ratings-api
+  tag: "production-initial"
+workloadIdentityClientId: "replace-with-terraform-output"
+keyVaultName: "replace-with-terraform-output"
+tenantId: "replace-with-tenant-id"
+ingress:
+  host: ratings.example.com
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 10
+podDisruptionBudget:
+  minAvailable: 2
+rollout:
+  enabled: true
+  canary:
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 180s
+      - setWeight: 50
+      - pause:
+          duration: 300s
+      - setWeight: 100

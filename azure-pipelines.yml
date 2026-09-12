@@ -1,0 +1,168 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - app/*
+      - helm/*
+      - gitops/*
+      - azure-pipelines.yml
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  imageRepository: ratings-api
+  dockerfilePath: app/Dockerfile
+  pythonVersion: "3.12"
+
+stages:
+  - stage: validate
+    displayName: Validate and Scan
+    jobs:
+      - job: app_security
+        displayName: App tests, SAST, dependency, filesystem scan
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+          - script: |
+              python -m pip install --upgrade pip
+              python -m pip install -r app/requirements-dev.txt
+              python -m pytest app/tests -q --junitxml=test-results.xml
+              python -m ruff check app
+            displayName: Unit tests and lint
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: test-results.xml
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/semgrep/semgrep/develop/scripts/install.sh | sh
+              semgrep scan --config auto app
+            displayName: Semgrep SAST
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+              trivy fs --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy-fs.json .
+            displayName: Trivy filesystem scan
+          - publish: trivy-fs.json
+            artifact: trivy-fs
+            condition: always()
+
+  - stage: build
+    displayName: Build, SBOM, Push
+    dependsOn: validate
+    condition: succeeded()
+    variables:
+      - group: ado-aks-platform-common
+    jobs:
+      - job: container
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: Docker@2
+            displayName: Build image
+            inputs:
+              command: build
+              Dockerfile: $(dockerfilePath)
+              repository: $(imageRepository)
+              tags: |
+                $(Build.BuildId)
+          - script: |
+              curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+              syft packages $(imageRepository):$(Build.BuildId) -o spdx-json=sbom.spdx.json
+            displayName: Generate SBOM
+          - publish: sbom.spdx.json
+            artifact: sbom
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            displayName: Install Trivy
+          - script: |
+              trivy image --severity HIGH,CRITICAL --exit-code 1 --format json --output trivy-image.json $(imageRepository):$(Build.BuildId)
+            displayName: Trivy image scan
+          - task: Docker@2
+            displayName: Push to ACR
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(azureContainerRegistryServiceConnection)
+              repository: $(imageRepository)
+              Dockerfile: $(dockerfilePath)
+              tags: |
+                $(Build.BuildId)
+
+  - stage: deploy_dev
+    displayName: Update Dev GitOps
+    dependsOn: build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: dev_gitops
+        environment: Dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - pwsh: ./scripts/promote-image.ps1 -Environment dev -ImageTag "$(Build.BuildId)"
+                  displayName: Update dev image tag
+                - pwsh: ./scripts/commit-gitops-change.ps1 -Environment dev -ImageTag "$(Build.BuildId)"
+                  displayName: Commit dev GitOps change
+
+  - stage: deploy_staging
+    displayName: Update Staging GitOps
+    dependsOn: deploy_dev
+    condition: succeeded()
+    jobs:
+      - deployment: staging_gitops
+        environment: Staging
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - script: |
+                    sudo gpg -k
+                    curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+                    echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+                    sudo apt-get update
+                    sudo apt-get install -y k6
+                  displayName: Install k6
+                - script: k6 run k6/load-test.js
+                  displayName: k6 load test
+                - pwsh: ./scripts/promote-image.ps1 -Environment staging -ImageTag "$(Build.BuildId)"
+                  displayName: Update staging image tag
+                - pwsh: ./scripts/commit-gitops-change.ps1 -Environment staging -ImageTag "$(Build.BuildId)"
+                  displayName: Commit staging GitOps change
+
+  - stage: production_canary
+    displayName: Production Canary
+    dependsOn: deploy_staging
+    condition: succeeded()
+    jobs:
+      - deployment: prod_canary
+        environment: Production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - script: |
+                    sudo gpg -k
+                    curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+                    echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+                    sudo apt-get update
+                    sudo apt-get install -y k6
+                  displayName: Install k6
+                - pwsh: ./scripts/promote-image.ps1 -Environment production -ImageTag "$(Build.BuildId)"
+                  displayName: Promote image through GitOps
+                - pwsh: ./scripts/commit-gitops-change.ps1 -Environment production -ImageTag "$(Build.BuildId)"
+                  displayName: Commit production GitOps change
+                - script: k6 run k6/smoke-test.js
+                  displayName: Production smoke test

@@ -1,0 +1,11 @@
+replicaCount: 2
+environment: staging
+image:
+  repository: replace.azurecr.io/ratings-api
+  tag: "staging"
+ingress:
+  host: ratings-staging.example.com
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 5
+

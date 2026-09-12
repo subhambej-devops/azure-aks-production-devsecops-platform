@@ -1,0 +1,5 @@
+resource_group_name  = "rg-aksdevsecops-tfstate"
+storage_account_name = "replacewithstateaccount"
+container_name       = "tfstate"
+key                  = "aks-platform-dev.tfstate"
+

@@ -1,0 +1,11 @@
+replicaCount: 1
+environment: dev
+image:
+  repository: replace.azurecr.io/ratings-api
+  tag: "dev"
+ingress:
+  host: ratings-dev.example.com
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3
+

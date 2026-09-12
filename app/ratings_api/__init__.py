@@ -1,0 +1,2 @@
+"""Ratings API package."""
+

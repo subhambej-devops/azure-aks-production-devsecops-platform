@@ -1,0 +1,63 @@
+replicaCount: 2
+
+image:
+  repository: ratings-api
+  tag: "local"
+  pullPolicy: IfNotPresent
+
+environment: local
+workloadIdentityClientId: ""
+keyVaultName: ""
+tenantId: ""
+databaseSecretName: ratings-database-url
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: azure-application-gateway
+  host: ratings.local
+  tlsSecretName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 6
+  cpuUtilization: 70
+
+rollout:
+  enabled: false
+  canary:
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 120s
+      - setWeight: 50
+      - pause:
+          duration: 300s
+      - setWeight: 100
+
+podDisruptionBudget:
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  egressCidrs:
+    - 10.0.0.0/8
+    - 168.63.129.16/32
+
+quota:
+  requestsCpu: "2"
+  requestsMemory: 4Gi
+  limitsCpu: "4"
+  limitsMemory: 8Gi

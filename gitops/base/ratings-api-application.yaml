@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ratings-api
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: aks-platform
+  source:
+    repoURL: https://github.com/sujoy-halder/azure-aks-production-devsecops-platform.git
+    targetRevision: main
+    path: helm/ratings-api
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../../gitops/overlays/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ratings
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+

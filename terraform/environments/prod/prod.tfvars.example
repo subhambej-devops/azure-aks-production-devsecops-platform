@@ -1,0 +1,4 @@
+postgres_admin_password = "replace-with-key-vault-or-pipeline-secret"
+app_gateway_ssl_certificate_data     = "replace-with-base64-pfx"
+app_gateway_ssl_certificate_password = "replace-with-pfx-password"
+alert_email             = "you@example.com"

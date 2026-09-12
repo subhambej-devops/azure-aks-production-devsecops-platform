@@ -1,0 +1,14 @@
+environment: staging
+replicaCount: 2
+image:
+  repository: replace.azurecr.io/ratings-api
+  tag: "staging-initial"
+workloadIdentityClientId: "replace-with-terraform-output"
+keyVaultName: "replace-with-terraform-output"
+tenantId: "replace-with-tenant-id"
+ingress:
+  host: ratings-staging.example.com
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 5
+

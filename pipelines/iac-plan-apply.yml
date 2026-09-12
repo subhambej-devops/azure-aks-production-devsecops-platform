@@ -1,0 +1,66 @@
+parameters:
+  - name: environment
+    type: string
+    values:
+      - dev
+      - staging
+      - prod
+
+trigger: none
+
+variables:
+  - group: ado-aks-platform-common
+  - group: ado-aks-platform-${{ parameters.environment }}
+
+stages:
+  - stage: plan
+    displayName: Terraform Plan
+    jobs:
+      - job: terraform_plan
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: terraform fmt -check -recursive terraform
+            displayName: terraform fmt
+          - script: |
+              curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+              tflint --init
+              tflint --chdir terraform/environments/${{ parameters.environment }}
+            displayName: TFLint
+          - script: |
+              pip install checkov
+              checkov -d terraform --framework terraform --quiet
+            displayName: Checkov
+          - script: |
+              terraform -chdir=terraform/environments/${{ parameters.environment }} init \
+                -backend-config=../../backend/${{ parameters.environment }}.azurerm.tfbackend
+              terraform -chdir=terraform/environments/${{ parameters.environment }} validate
+              terraform -chdir=terraform/environments/${{ parameters.environment }} plan \
+                -var "postgres_admin_password=$(postgresAdminPassword)" \
+                -var "app_gateway_ssl_certificate_data=$(appGatewaySslCertificateData)" \
+                -var "app_gateway_ssl_certificate_password=$(appGatewaySslCertificatePassword)" \
+                -out=tfplan
+            displayName: Terraform init, validate, plan
+          - publish: terraform/environments/${{ parameters.environment }}/tfplan
+            artifact: tfplan-${{ parameters.environment }}
+
+  - stage: apply
+    displayName: Terraform Apply
+    dependsOn: plan
+    condition: succeeded()
+    jobs:
+      - deployment: terraform_apply
+        environment: ${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - download: current
+                  artifact: tfplan-${{ parameters.environment }}
+                - script: |
+                    terraform -chdir=terraform/environments/${{ parameters.environment }} init \
+                      -backend-config=../../backend/${{ parameters.environment }}.azurerm.tfbackend
+                    cp "$(Pipeline.Workspace)/tfplan-${{ parameters.environment }}/tfplan" terraform/environments/${{ parameters.environment }}/tfplan
+                    terraform -chdir=terraform/environments/${{ parameters.environment }} apply -auto-approve tfplan
+                  displayName: Terraform apply

@@ -1,0 +1,13 @@
+environment: dev
+image:
+  repository: replace.azurecr.io/ratings-api
+  tag: "dev-initial"
+workloadIdentityClientId: "replace-with-terraform-output"
+keyVaultName: "replace-with-terraform-output"
+tenantId: "replace-with-tenant-id"
+ingress:
+  host: ratings-dev.example.com
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3
+
